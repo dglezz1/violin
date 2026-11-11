@@ -277,9 +277,14 @@ def _post_tool_call_hook(
     if isinstance(args, dict):
         command = str(args.get("command") or args.get("cmd") or "")
         phase = str(args.get("phase") or "")
-        eng_dir = str(args.get("eng_dir") or "")
-        if eng_dir and eng_dir not in _engagement_dirs():
-            _engagement_dirs().insert(0, Path(eng_dir).expanduser())
+        # Any tool argument that names a path inside the engagement registers
+        # it — eng_dir for guard tools, cwd for executors, path/file_path for
+        # the file tools — so engagement-level notes flow from the first turn,
+        # before the first guard call.
+        session = str(kwargs.get("session_id") or "")
+        for value in args.values():
+            if isinstance(value, str) and value.startswith("/"):
+                _register_engagement(Path(value).expanduser(), session)
     try:
         scan_tool_result(
             str(tool_name),
@@ -293,7 +298,7 @@ def _post_tool_call_hook(
         return
     if phase:
         _remember_phase(phase)
-    _maybe_queue_objective_mode(tool_name, result, args)
+    _maybe_queue_objective_mode(tool_name, result, args, kwargs)
 
 
 _LAST_PHASE: list[str] = []
@@ -302,7 +307,9 @@ _LAST_PHASE: list[str] = []
 _OBJECTIVE_NOTE_INTERVAL = 45 * 60  # re-dispatch after long sessions / compaction
 
 
-def _maybe_queue_objective_mode(tool_name: Any, result: Any, args: Any) -> None:
+def _maybe_queue_objective_mode(
+    tool_name: Any, result: Any, args: Any, kwargs: Any
+) -> None:
     """Queue the objective-mode note when a target response looks like a catalogue.
 
     The detection is on the response shape, not on a route name, so any target
@@ -311,12 +318,22 @@ def _maybe_queue_objective_mode(tool_name: Any, result: Any, args: Any) -> None:
     restarts, and re-arms after an interval so a long session re-receives it
     after its context was compacted.
     """
-    if str(tool_name or "") not in {"violin_exec", "violin_exec_burst"}:
-        return
     text = result if isinstance(result, str) else str(result or "")
     if not text:
         return
     try:
+        session = str(kwargs.get("session_id") or "")
+        # Executor results carry the working directory: the cold-start source
+        # of the session-to-engagement association, before any guard call
+        # names the engagement.
+        if text.lstrip().startswith("{") and '"cwd"' in text[:600]:
+            try:
+                payload = json.loads(text[: text.rfind("}") + 1])
+                cwd = payload.get("cwd")
+                if isinstance(cwd, str) and cwd:
+                    _register_engagement(Path(cwd).expanduser(), session)
+            except (json.JSONDecodeError, ValueError):
+                pass
         if detect_catalogue(text) is None:
             return
         dirs = _engagement_dirs()
@@ -379,6 +396,83 @@ def _active_task_phase() -> str:
 _ENGAGEMENT_DIRS: list[Path] = []
 
 
+def _engagement_registry_path() -> Path:
+    from .core.index import default_index_dir
+
+    return default_index_dir() / "engagements.jsonl"
+
+
+def _register_engagement(path: Path, session_id: str = "") -> None:
+    """Register *path*, or its nearest engagement ancestor, as the session's.
+
+    An engagement is a directory holding the guard's canonical scope and PTT;
+    a tool that runs in a subdirectory of one (evidence/, ops/, ...) still
+    belongs to it.
+    """
+    try:
+        candidates = [path, *path.parents]
+    except OSError:
+        return
+    for candidate in candidates:
+        if candidate in _ENGAGEMENT_DIRS:
+            return
+        if (candidate / "scope" / "scope.yaml").is_file() and (
+            candidate / "state" / "ptt.md"
+        ).is_file():
+            _ENGAGEMENT_DIRS.insert(0, candidate)
+            if session_id:
+                _remember_session_engagement(session_id, candidate)
+            return
+
+
+def _remember_session_engagement(session_id: str, path: Path) -> None:
+    """Persist the session-to-engagement association across hook calls.
+
+    The gateway process holds every profile session, and its working
+    directory is not the engagement's, so the association is the only thing
+    that lets a pre_llm_call hook find the engagement it is talking about.
+    """
+    import time as _time
+
+    try:
+        registry = _engagement_registry_path()
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        with registry.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {"session_id": session_id, "eng_dir": str(path), "at": _time.time()}
+                )
+                + "\n"
+            )
+    except OSError:
+        pass
+
+
+def _session_engagement(session_id: str) -> Path | None:
+    """The most recent engagement a session was seen working in."""
+    if not session_id:
+        return None
+    try:
+        registry = _engagement_registry_path()
+        if not registry.is_file():
+            return None
+        best: tuple[float, Path] | None = None
+        for line in registry.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("session_id") != session_id:
+                continue
+            path = Path(str(row.get("eng_dir") or ""))
+            at = float(row.get("at") or 0)
+            if path.is_dir() and (best is None or at > best[0]):
+                best = (at, path)
+        return best[1] if best else None
+    except OSError:
+        return None
+
+
 def _engagement_dirs() -> list[Path]:
     """The engagement directories this session may be working in.
 
@@ -403,16 +497,19 @@ def _engagement_dirs() -> list[Path]:
         if (candidate / "scope" / "scope.yaml").is_file() and (
             candidate / "state" / "ptt.md"
         ).is_file():
-            if candidate not in _ENGAGEMENT_DIRS:
-                _ENGAGEMENT_DIRS.append(candidate)
+            _register_engagement(candidate)
             break
     return _ENGAGEMENT_DIRS
 
 
-def _drain_objective_note() -> list[str]:
+def _drain_objective_note(session_id: str = "") -> list[str]:
     """Deliver a queued objective-mode note once, then remove it."""
     out: list[str] = []
-    for candidate in _engagement_dirs():
+    dirs = list(_engagement_dirs())
+    by_session = _session_engagement(session_id)
+    if by_session is not None and by_session not in dirs:
+        dirs.insert(0, by_session)
+    for candidate in dirs:
         note_path = candidate / "state" / "objective-mode.note"
         try:
             if not note_path.is_file():
@@ -484,6 +581,62 @@ def _vocabulary_note(phase: str) -> str:
     return note
 
 
+def _transform_tool_result_hook(
+    tool_name: Any = None,
+    args: Any = None,
+    result: Any = None,
+    **kwargs: Any,
+) -> str | None:
+    """Deliver a queued engagement note by appending it to a tool result.
+
+    ``pre_llm_call`` does not run in non-interactive one-shot sessions, but
+    this hook does, and its return value is what enters the context — so the
+    objective-mode note reaches the agent through the same path in both
+    interactive and one-shot runs. One delivery per arming: the note is
+    consumed when it is appended.
+    """
+    if result is None:
+        return None
+    try:
+        session = str(kwargs.get("session_id") or "")
+        if not session:
+            # Register from the same signals the scanner uses, so a cold
+            # start finds the engagement even before the first guard call.
+            if isinstance(args, dict):
+                for value in args.values():
+                    if isinstance(value, str) and value.startswith("/"):
+                        _register_engagement(Path(value).expanduser(), session or "")
+            text_now = result if isinstance(result, str) else str(result)
+            if text_now.lstrip().startswith("{") and '"cwd"' in text_now[:600]:
+                try:
+                    payload = json.loads(text_now[: text_now.rfind("}") + 1])
+                    cwd = payload.get("cwd")
+                    if isinstance(cwd, str) and cwd:
+                        _register_engagement(Path(cwd).expanduser(), session)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        for candidate in ([_session_engagement(session)] if session else []) + list(
+            _engagement_dirs()
+        ):
+            if candidate is None:
+                continue
+            note_path = candidate / "state" / "objective-mode.note"
+            try:
+                if not note_path.is_file():
+                    continue
+                note = note_path.read_text(encoding="utf-8", errors="replace").strip()
+                if not note:
+                    continue
+                note_path.unlink()
+            except OSError:
+                continue
+            base = result if isinstance(result, str) else str(result)
+            return f"{base}\n\n{note}"
+    except Exception:
+        return None
+    return None
+
+
 def _pre_llm_call_hook(session_id: Any = None, eng_dir: Any = None, **kwargs: Any) -> str:
     """Inject the pending dispatch notes into the model's turn."""
     try:
@@ -492,7 +645,7 @@ def _pre_llm_call_hook(session_id: Any = None, eng_dir: Any = None, **kwargs: An
         for item in pending[:4]:
             parts.append(item.note())
             DispatchQueue().mark_delivered(item)
-        parts.extend(_drain_objective_note())
+        parts.extend(_drain_objective_note(str(kwargs.get("session_id") or "")))
         note = _vocabulary_note(str(kwargs.get("phase") or (_LAST_PHASE[0] if _LAST_PHASE else "")))
         if note:
             parts.append(note)
@@ -673,6 +826,7 @@ def register(ctx: Any) -> None:
         emoji="🔁",
     )
     ctx.register_hook("post_tool_call", _post_tool_call_hook)
+    ctx.register_hook("transform_tool_result", _transform_tool_result_hook)
     ctx.register_hook("pre_llm_call", _pre_llm_call_hook)
 
 

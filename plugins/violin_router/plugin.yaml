@@ -15,6 +15,7 @@ provides_tools:
 - violin_router_reindex
 hooks:
 - post_tool_call
+- transform_tool_result
 - pre_llm_call
 toolsets:
   violin_router:

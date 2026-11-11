@@ -35,6 +35,8 @@ class SkillEntry:
     tags: tuple[str, ...] = ()
     dispatch_eligible: bool = False
     excerpt: str = ""
+    use_when: str = ""
+    avoid_when: str = ""
 
     @property
     def body_path(self) -> Path:
@@ -112,6 +114,34 @@ def _category_for(path: Path, root: Path) -> str:
     return parts[0] if len(parts) > 2 else ""
 
 
+_WHEN_HINTS = ("when to use", "use when", "use this", "when not", "avoid", "do not use", "not for")
+
+
+def _when_sections(text: str) -> tuple[str, str]:
+    """Use-when / avoid-when hints from the body's own headings (L1 signal)."""
+    body = FRONTMATTER_RE.sub("", text, count=1)
+    if body == text:
+        body = OPEN_FRONTMATTER_RE.sub("", text, count=1)
+    use_when = ""
+    avoid_when = ""
+    section = ""
+    for raw in body.splitlines():
+        line = raw.strip().lower()
+        if line.startswith("#"):
+            title = line.lstrip("#").strip()
+            if any(h in title for h in _WHEN_HINTS):
+                section = "avoid" if ("avoid" in title or "not" in title) else "use"
+            elif section:
+                section = ""
+            continue
+        if section and line and not line.startswith(("|", "```")):
+            if section == "use" and len(use_when) < 300:
+                use_when = f"{use_when} {raw.strip()}".strip()
+            elif section == "avoid" and len(avoid_when) < 300:
+                avoid_when = f"{avoid_when} {raw.strip()}".strip()
+    return use_when[:300], avoid_when[:300]
+
+
 def _excerpt_of(text: str, limit: int = 1200) -> str:
     """A short, plain-text excerpt of a skill body.
 
@@ -153,6 +183,7 @@ def _iter_source(source: SkillSource) -> Iterator[SkillEntry]:
         eligible = source.dispatch_eligible
         if source.label == "violin" and category in {"pentest", "web-app"}:
             eligible = True
+        use_when, avoid_when = _when_sections(text)
         yield SkillEntry(
             name=name,
             description=description,
@@ -162,6 +193,8 @@ def _iter_source(source: SkillSource) -> Iterator[SkillEntry]:
             tags=_tags_of(front.get("tags") or front.get("metadata")),
             dispatch_eligible=eligible,
             excerpt=_excerpt_of(text),
+            use_when=use_when,
+            avoid_when=avoid_when,
         )
 
 
@@ -192,6 +225,8 @@ def collect_entries(sources: Iterable[SkillSource]) -> list[SkillEntry]:
                         tags=existing.tags,
                         dispatch_eligible=True,
                         excerpt=existing.excerpt,
+                        use_when=existing.use_when,
+                        avoid_when=existing.avoid_when,
                     )
                 continue
             path_key = f"{source.label}:{entry.path}"

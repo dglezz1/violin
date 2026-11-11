@@ -21,12 +21,32 @@ _INDEX_VERSION = 1
 # A literal term match is a stronger signal than a topical one, so it lifts
 # the score above what the cosine similarity alone would give.
 _LEXICAL_BONUS = 0.25
+# Blend weight for the FTS5 BM25 rank of the L1 index, on the same scale as
+# the cosine similarity it is added to.
+_BM25_WEIGHT = 0.35
 _STOP_TERMS = frozenset(
     {
         "a", "an", "and", "or", "the", "to", "of", "in", "for", "on", "with", "how",
         "test", "testing", "tests", "playbook", "skill", "workflow", "using", "use",
     }
 )
+
+
+def _fts_scores(conn: sqlite3.Connection, query: str) -> dict[int, float]:
+    """BM25 rank per skill id from the L1 full-text index (empty on miss)."""
+    terms = _terms(query)
+    if not terms:
+        return {}
+    match = " OR ".join(f'"{term}"' for term in terms[:12])
+    try:
+        rows = conn.execute(
+            "SELECT rowid, bm25(skills_fts) AS rank FROM skills_fts"
+            " WHERE skills_fts MATCH ? ORDER BY rank LIMIT 40",
+            (match,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {int(row["rowid"]): float(row["rank"]) for row in rows}
 
 
 def _terms(query: str) -> list[str]:
@@ -97,7 +117,17 @@ class SkillIndex:
                     tags TEXT NOT NULL,
                     dispatch_eligible INTEGER NOT NULL,
                     embed_text TEXT NOT NULL,
-                    content_digest TEXT NOT NULL
+                    content_digest TEXT NOT NULL,
+                    use_when TEXT NOT NULL DEFAULT '',
+                    avoid_when TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
+                    name, description, tags, use_when, avoid_when, excerpt,
+                    content='skills', content_rowid='id', tokenize='porter unicode61'
                 )
                 """
             )
@@ -140,6 +170,10 @@ class SkillIndex:
         conn = self.connect()
         with self._lock:
             conn.execute("DELETE FROM skills")
+            try:
+                conn.execute("INSERT INTO skills_fts(skills_fts) VALUES('rebuild')")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("DELETE FROM skill_vectors")
             try:
                 conn.execute("DELETE FROM skill_vec")
@@ -167,6 +201,22 @@ class SkillIndex:
                 ),
             )
             skill_id = int(cur.lastrowid or 0)
+            try:
+                conn.execute(
+                    "INSERT INTO skills_fts(rowid, name, description, tags, use_when,"
+                    " avoid_when, excerpt) VALUES (?,?,?,?,?,?,?)",
+                    (
+                        skill_id,
+                        entry.name,
+                        entry.description,
+                        json.dumps(list(entry.tags)),
+                        entry.use_when,
+                        entry.avoid_when,
+                        entry.excerpt[:1200],
+                    ),
+                )
+            except sqlite3.OperationalError:
+                pass  # FTS is a ranking accelerator, never a hard dependency
             packed = _pack(embedding)
             conn.execute(
                 "INSERT OR REPLACE INTO skill_vectors (skill_id, dim, vector) VALUES (?,?,?)",
@@ -227,6 +277,8 @@ class SkillIndex:
         from .embedding import cosine
 
         terms = _terms(query_text)
+        fts_scores = _fts_scores(conn, query_text)
+        best_bm25 = max(fts_scores.values()) if fts_scores else 0.0
         hits: list[SearchHit] = []
         for row in rows:
             if eligible_only and not int(row["dispatch_eligible"]):
@@ -237,6 +289,11 @@ class SkillIndex:
             matched = [term for term in terms if term in haystack]
             if matched:
                 score += _LEXICAL_BONUS * (len(matched) / max(1, len(terms)))
+            # BM25 over the L1 index (keywords, use/avoid-when, excerpt):
+            # normalised to 0..1 and blended with the semantic score.
+            bm25 = fts_scores.get(int(row["id"]))
+            if bm25 and best_bm25 > 0:
+                score += _BM25_WEIGHT * (1.0 - bm25 / best_bm25)
             hits.append(
                 SearchHit(
                     name=str(row["name"]),
