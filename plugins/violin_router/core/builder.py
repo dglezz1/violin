@@ -104,8 +104,12 @@ def _violin_skills_root() -> Path:
 
 
 def collect_pool(violin_skills: Path | None = None) -> list[SkillEntry]:
-    """Gather every indexable skill from the configured sources."""
-    sources = default_sources(violin_skills)
+    """Gather every indexable skill from the configured sources.
+
+    The profile's own skills are part of the pool by default: without them
+    the routing tables reference playbooks the search cannot find.
+    """
+    sources = default_sources(violin_skills or _violin_skills_root())
     return collect_entries(sources)
 
 

@@ -581,6 +581,78 @@ def _vocabulary_note(phase: str) -> str:
     return note
 
 
+_HANDOFF_DELIVERED: set[str] = set()
+
+
+def _session_handoff(eng_dir: Path) -> str:
+    """A one-turn handoff for a session resuming an engagement with state.
+
+    A resumed session must not re-run the discovery a previous session paid
+    for. This summarises what the engagement already knows — objectives
+    closed, what is still open, classes already refuted — in a few hundred
+    tokens, and it is delivered once per session. The state stays on disk in
+    the engagement; nothing from another scope ever enters this one.
+    """
+    key = str(eng_dir)
+    if key in _HANDOFF_DELIVERED:
+        return ""
+    _HANDOFF_DELIVERED.add(key)
+    parts: list[str] = []
+
+    objectives = eng_dir / "state" / "objectives.json"
+    if objectives.is_file():
+        try:
+            data = json.loads(objectives.read_text(encoding="utf-8")).get("data") or []
+            solved = [c for c in data if c.get("solved")]
+            open_items = [
+                c for c in data if not c.get("solved")
+            ]
+            open_items.sort(key=lambda c: (c.get("difficulty") or 9))
+            parts.append(
+                f"[HANDOFF] objetivo tracker del target: {len(solved)}/{len(data)} cerrados; "
+                f"{len(open_items)} abiertos (los 5 más baratos: "
+                + "; ".join(f"{c['name']} (d={c.get('difficulty')})" for c in open_items[:5])
+                + "). La lista completa vive en state/objectives.json; no re-probes lo cerrado."
+            )
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    hyp = eng_dir / "hypotheses.md"
+    if hyp.is_file():
+        try:
+            text = hyp.read_text(encoding="utf-8", errors="replace")
+            rejected = []
+            for block in text.split("### ")[1:]:
+                title = block.splitlines()[0][:60]
+                if "Status:** Rejected" in block and "Vuln Class:**" in block:
+                    cls = block.split("Vuln Class:**", 1)[1].splitlines()[0].strip()
+                    rejected.append(f"{cls} ({title})")
+            if rejected:
+                parts.append(
+                    "[HANDOFF] clases ya refutadas con evidencia — no repitas estos tests: "
+                    + "; ".join(rejected[:8])
+                )
+        except OSError:
+            pass
+
+    matrix = eng_dir / "state" / "coverage-matrix.yaml"
+    if matrix.is_file():
+        try:
+            tested = sum(
+                1 for line in matrix.read_text(encoding="utf-8", errors="replace").splitlines()
+                if "status: tested" in line
+            )
+            if tested:
+                parts.append(
+                    f"[HANDOFF] coverage matrix: {tested} rutas ya enumeradas y probadas "
+                    f"(state/coverage-matrix.yaml); las rutas sin celda son el trabajo pendiente."
+                )
+        except OSError:
+            pass
+
+    return "\n\n".join(parts)
+
+
 def _transform_tool_result_hook(
     tool_name: Any = None,
     args: Any = None,
@@ -615,11 +687,15 @@ def _transform_tool_result_hook(
                         _register_engagement(Path(cwd).expanduser(), session)
                 except (json.JSONDecodeError, ValueError):
                     pass
+        delivered: list[str] = []
         for candidate in ([_session_engagement(session)] if session else []) + list(
             _engagement_dirs()
         ):
             if candidate is None:
                 continue
+            handoff = _session_handoff(candidate)
+            if handoff:
+                delivered.append(handoff)
             note_path = candidate / "state" / "objective-mode.note"
             try:
                 if not note_path.is_file():
@@ -630,8 +706,11 @@ def _transform_tool_result_hook(
                 note_path.unlink()
             except OSError:
                 continue
+            delivered.append(note)
+            break
+        if delivered:
             base = result if isinstance(result, str) else str(result)
-            return f"{base}\n\n{note}"
+            return f"{base}\n\n" + "\n\n".join(delivered)
     except Exception:
         return None
     return None

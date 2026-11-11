@@ -45,8 +45,10 @@ class SkillEntry:
     def embed_text(self) -> str:
         """Text handed to the embedding model.
 
-        The name, the description and a short excerpt of the body give the
-        retrieval enough signal to tell two playbooks apart. The excerpt is
+        The name, the description, the tags and a short excerpt of the body
+        give the retrieval enough signal to tell two playbooks apart. The
+        excerpt opens with the titles of the playbooks the skill carries, so
+        a short skill still names the techniques it owns. The excerpt is
         computed once at build time: the body itself never enters a prompt.
         """
         parts = [self.name.replace("/", " "), self.description]
@@ -99,10 +101,19 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
 
 
 def _tags_of(raw: str | None) -> tuple[str, ...]:
+    """First-class tags only: a nested metadata blob is not a tag list."""
     if not raw:
         return ()
     cleaned = raw.strip().strip("[]")
-    return tuple(t.strip().strip("\"'") for t in cleaned.split(",") if t.strip())
+    tags = []
+    for tag in cleaned.split(","):
+        tag = tag.strip().strip("\"'")
+        if not tag or len(tag) > 40:
+            continue
+        if ":" in tag or "[" in tag or tag.endswith(":"):
+            continue
+        tags.append(tag)
+    return tuple(tags)
 
 
 def _category_for(path: Path, root: Path) -> str:
@@ -115,6 +126,28 @@ def _category_for(path: Path, root: Path) -> str:
 
 
 _WHEN_HINTS = ("when to use", "use when", "use this", "when not", "avoid", "do not use", "not for")
+
+
+def _playbook_titles(path: Path) -> str:
+    """The playbook titles a skill ships, as retrieval signal.
+
+    A skill whose body is short (Violin's routed skills are) still owns real
+    ground: the playbooks it carries. Their titles name the techniques inside
+    ("SQL injection", "path traversal") and lift the skill for exactly the
+    queries those techniques describe.
+    """
+    try:
+        playbooks = sorted((path.parent / "playbooks").glob("*.md"))
+    except OSError:
+        return ""
+    titles = []
+    for playbook in playbooks[:20]:
+        for line in playbook.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("#") and len(line) > 3:
+                titles.append(line.lstrip("#").strip())
+                break
+    return " ".join(titles)[:400]
 
 
 def _when_sections(text: str) -> tuple[str, str]:
@@ -184,6 +217,14 @@ def _iter_source(source: SkillSource) -> Iterator[SkillEntry]:
         if source.label == "violin" and category in {"pentest", "web-app"}:
             eligible = True
         use_when, avoid_when = _when_sections(text)
+        playbook_signal = _playbook_titles(path)
+        excerpt = _excerpt_of(text)
+        if playbook_signal:
+            excerpt = f"{playbook_signal} | {excerpt}"[:1200]
+            # A one-line description cannot carry what a routed skill owns;
+            # the playbook titles are the skill's own words for it.
+            if len(description) < 80 and playbook_signal:
+                description = f"{description} Covers: {playbook_signal[:180]}"
         yield SkillEntry(
             name=name,
             description=description,
@@ -192,7 +233,7 @@ def _iter_source(source: SkillSource) -> Iterator[SkillEntry]:
             category=category,
             tags=_tags_of(front.get("tags") or front.get("metadata")),
             dispatch_eligible=eligible,
-            excerpt=_excerpt_of(text),
+            excerpt=excerpt,
             use_when=use_when,
             avoid_when=avoid_when,
         )

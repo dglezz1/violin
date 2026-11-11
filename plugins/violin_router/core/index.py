@@ -24,6 +24,8 @@ _LEXICAL_BONUS = 0.25
 # Blend weight for the FTS5 BM25 rank of the L1 index, on the same scale as
 # the cosine similarity it is added to.
 _BM25_WEIGHT = 0.35
+# The semantic floor a doc must clear before its BM25 rank counts.
+_BM25_MIN_COSINE = 0.50
 _STOP_TERMS = frozenset(
     {
         "a", "an", "and", "or", "the", "to", "of", "in", "for", "on", "with", "how",
@@ -278,7 +280,8 @@ class SkillIndex:
 
         terms = _terms(query_text)
         fts_scores = _fts_scores(conn, query_text)
-        best_bm25 = max(fts_scores.values()) if fts_scores else 0.0
+        # FTS5 reports bm25 as a COST: more negative is the better match.
+        best_bm25 = min(fts_scores.values()) if fts_scores else 0.0
         hits: list[SearchHit] = []
         for row in rows:
             if eligible_only and not int(row["dispatch_eligible"]):
@@ -292,8 +295,13 @@ class SkillIndex:
             # BM25 over the L1 index (keywords, use/avoid-when, excerpt):
             # normalised to 0..1 and blended with the semantic score.
             bm25 = fts_scores.get(int(row["id"]))
-            if bm25 and best_bm25 > 0:
-                score += _BM25_WEIGHT * (1.0 - bm25 / best_bm25)
+            # BM25 refines the semantic ranking; it never rescues a doc the
+            # embedding finds implausible (a long doc mentioning the query
+            # terms would otherwise out-rank a real playbook).
+            if bm25 and best_bm25 < 0 and score >= _BM25_MIN_COSINE:
+                # bm25 and best_bm25 are both negative, so the ratio is in
+                # (0, 1]: 1 for the best match, shrinking towards 0.
+                score += _BM25_WEIGHT * (bm25 / best_bm25)
             hits.append(
                 SearchHit(
                     name=str(row["name"]),
