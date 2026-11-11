@@ -19,25 +19,35 @@ from pathlib import Path
 from typing import Any
 
 _GUARD_MODULE = "plugins.violin_guard.core.skills.skill_policy"
+# Hermes loads a directory plugin as ``hermes_plugins.<slug>``, so the guard's
+# policy module is reachable under that name at runtime. The repository path
+# is the fallback for a source checkout.
+_GUARD_MODULE_CANDIDATES = (
+    _GUARD_MODULE,
+    "hermes_plugins.violin_guard.core.skills.skill_policy",
+)
 
 
 def _load_guard_policy() -> Any | None:
     """Import the guard's policy module, if it is importable from here."""
-    if _GUARD_MODULE in sys.modules:
-        return sys.modules[_GUARD_MODULE]
-    try:
-        spec = importlib.util.find_spec(_GUARD_MODULE)
-    except (ImportError, ValueError):
-        spec = None
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(module)
-    except Exception:
-        return None
-    sys.modules.setdefault(_GUARD_MODULE, module)
-    return module
+    for name in _GUARD_MODULE_CANDIDATES:
+        module = sys.modules.get(name)
+        if module is not None:
+            return module
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, ValueError):
+            spec = None
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            continue
+        sys.modules.setdefault(name, module)
+        return module
+    return None
 
 
 @dataclass(frozen=True)

@@ -109,12 +109,42 @@ def semantic_detections(
     return confirmed, grey_band
 
 
+def _attach_surface_playbooks(
+    detections: list[DispatchItem],
+    command: str,
+    text: str,
+) -> None:
+    """Extend each detection with the playbooks that cover its surface.
+
+    The guard already routes a class to the skill Violin ships. This adds the
+    pool playbooks that cover the same class from a wider angle, chosen by the
+    command that ran and the output it produced — so the agent is told what to
+    read without anyone naming the skill.
+    """
+    from .surface import resolve
+
+    for item in detections:
+        refs = resolve(
+            vulnerability_class=item.trigger,
+            command=command,
+            signal=item.signal or text[:400],
+        )
+        if not refs:
+            continue
+        existing = set(item.skills)
+        for ref in refs:
+            if ref.name not in existing:
+                item.skills.append(ref.name)
+                existing.add(ref.name)
+
+
 def scan_tool_result(
     tool_name: str,
     result: Any,
     exec_ref: str = "",
     session_id: str = "",
     phase: str | None = None,
+    command: str = "",
 ) -> ScanResult:
     """Scan one tool result and queue everything it reveals."""
     if tool_name not in TARGET_TOOLS:
@@ -141,6 +171,7 @@ def scan_tool_result(
         )
         detections.append(queue.add(item))
     if hits:
+        _attach_surface_playbooks(detections, command, text)
         return ScanResult(detections=detections, scanned=True, source="regex")
     bands = _phase_thresholds(phase)
     confirmed, grey = semantic_detections(
@@ -160,6 +191,7 @@ def scan_tool_result(
             created_at=_now(),
         )
         detections.append(queue.add(item))
+    _attach_surface_playbooks(detections, command, text)
     return ScanResult(
         detections=detections,
         scanned=True,

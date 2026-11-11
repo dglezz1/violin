@@ -174,6 +174,42 @@ def _strip_frontmatter(text: str) -> str:
     return text
 
 
+def _handle_router_classes(raw: Any = None, **kwargs: Any) -> str:
+    """List the vulnerability classes that can be tested, and how.
+
+    The guard decides which classes are routable; this surfaces that list so
+    the coverage standard ("every class, against every route") is reachable
+    without the agent having to guess which classes exist. For each class it
+    names the guard's canonical skill and the pool playbooks that cover it.
+
+    Args:
+        eng_dir: Engagement directory (unused, kept for signature parity).
+    """
+    from .core.surface import guard_vocabulary, resolve
+
+    classes = guard_vocabulary()
+    rows = []
+    for name in classes:
+        refs = resolve(vulnerability_class=name)
+        rows.append(
+            {
+                "class": name,
+                "skills": [ref.name for ref in refs],
+            }
+        )
+    return json.dumps(
+        {
+            "count": len(rows),
+            "classes": rows,
+            "note": (
+                "every class here can be recorded as a hypothesis (vuln_class) and "
+                "tested; a class you did not test is a gap in the coverage matrix"
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
 def _handle_cve_lookup(raw: Any = None, **kwargs: Any) -> str:
     """Look up recent advisories for a technology or package.
 
@@ -234,32 +270,87 @@ def _post_tool_call_hook(
     """Scan target-facing tool output for vulnerability and technology signals."""
     if not tool_name:
         return
+    command = ""
+    phase = ""
+    if isinstance(args, dict):
+        command = str(args.get("command") or args.get("cmd") or "")
+        phase = str(args.get("phase") or "")
     try:
         scan_tool_result(
             str(tool_name),
             result,
             exec_ref=str(kwargs.get("tool_call_id") or ""),
             session_id=str(kwargs.get("session_id") or ""),
+            command=command,
         )
     except Exception:
         # The router is advisory: a scan failure must never block the agent.
         return
+    if phase:
+        _remember_phase(phase)
+    _maybe_dispatch_vocabulary(phase)
+
+
+_VOCABULARY_DISPATCHED: set[str] = set()
+_LAST_PHASE: list[str] = []
+
+
+def _remember_phase(phase: str) -> None:
+    """Remember the phase the agent is working in.
+
+    The ``pre_llm_call`` hook does not carry the phase, but the command that
+    ran does, so the last observed phase is what the next turn needs.
+    """
+    value = phase.strip().upper()
+    if value:
+        _LAST_PHASE[:] = [value]
+
+
+def _vocabulary_note(phase: str) -> str:
+    """The routable class vocabulary, surfaced once per phase.
+
+    The coverage standard is "every class, against every route". The agent
+    cannot cover a class it does not know exists, and the guard's routing
+    table is what decides. Surfacing it removes the guess without telling the
+    agent what is vulnerable.
+    """
+    key = phase.strip().upper()
+    if not key or key in {"SCOPING", "RECON"}:
+        return ""
+    if key in _VOCABULARY_DISPATCHED:
+        return ""
+    from .core.surface import guard_vocabulary
+
+    classes = guard_vocabulary()
+    if not classes:
+        return ""
+    _VOCABULARY_DISPATCHED.add(key)
+    groups: dict[str, list[str]] = {}
+    for name in classes:
+        groups.setdefault(name.split("-")[0], []).append(name)
+    summary = "; ".join(
+        f"{group}: {', '.join(sorted(names))}" for group, names in sorted(groups.items())
+    )
+    return (
+        "\n[SKILL DISPATCH] vocabulary de clases — clases que el gate puede enrutar "
+        f"({len(classes)}):\n{summary}\n"
+        "Cobertura exhaustiva = cada clase contra cada ruta. Registra cada clase no "
+        "probada como hipótesis con vuln_class, o ciérrala con evidencia."
+    )
 
 
 def _pre_llm_call_hook(session_id: Any = None, eng_dir: Any = None, **kwargs: Any) -> str:
     """Inject the pending dispatch notes into the model's turn."""
     try:
-        queue = DispatchQueue()
-        pending = [item for item in queue.load() if not item.delivered]
-        if not pending:
-            return ""
-        notes = []
+        parts: list[str] = []
+        pending = [item for item in DispatchQueue().load() if not item.delivered]
         for item in pending[:4]:
-            notes.append(item.note())
-            queue.mark_delivered(item)
-        if not notes:
-            return ""
-        return "\n\n".join(notes)
+            parts.append(item.note())
+            DispatchQueue().mark_delivered(item)
+        note = _vocabulary_note(str(kwargs.get("phase") or (_LAST_PHASE[0] if _LAST_PHASE else "")))
+        if note:
+            parts.append(note)
+        return "\n\n".join(parts)
     except Exception:
         return ""
 
@@ -331,6 +422,29 @@ def register(ctx: Any) -> None:
         },
         handler=_handle_skill_view,
         emoji="📖",
+    )
+    ctx.register_tool(
+        name="violin_router_classes",
+        toolset=_TOOLSET,
+        schema={
+            "name": "violin_router_classes",
+            "description": (
+                "List every vulnerability class that can be tested in this engagement, "
+                "with the playbooks that cover it. Call it before planning so the "
+                "coverage standard is reachable without guessing which classes exist."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "eng_dir": {
+                        "type": "string",
+                        "description": "Engagement directory.",
+                    },
+                },
+            },
+        },
+        handler=_handle_router_classes,
+        emoji="🧭",
     )
     ctx.register_tool(
         name="violin_cve_lookup",

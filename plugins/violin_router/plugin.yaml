@@ -10,6 +10,7 @@ provides_tools:
 - violin_skill_search
 - violin_skill_view
 - violin_cve_lookup
+- violin_router_classes
 - violin_router_status
 - violin_router_reindex
 hooks:

@@ -1,0 +1,119 @@
+# Surface playbooks: which pool playbook covers which attack surface.
+#
+# The router uses this table when the guard's own route does not cover the
+# class that was detected, so a detection always resolves to a concrete
+# playbook the agent can read before testing.
+#
+# `classes` are the canonical vulnerability route keys the guard accepts.
+# `surfaces` are matched against the target-facing command, so a command that
+# touches a review endpoint pulls the XSS playbook, not the SQL one.
+#
+# A class with no entry here still resolves through the guard's routing
+# table; the entries here extend it, they never replace it.
+
+sql-injection:
+  classes: [sqli, sql-injection, nosql-injection, blind-sql-injection, xpath-injection]
+  surfaces: ["/login", "user/login", "authentication", "search", "query", "filter"]
+  skills:
+    - name: web-app
+      note: "SQL injection playbook (skills/web-app/playbooks/sqli.md)"
+    - name: strix/api-security-testing
+      note: "SQL injection, NoSQL and ORM injection technique set"
+    - name: security/web-pentest-workflow
+      note: "rate-limited workflow for a full program, includes injection stage"
+
+xss:
+  classes: [xss, cross-site-scripting, reflected-xss, stored-xss, dom-xss]
+  surfaces: [feedback", "review", "comment", "search", "profile", "name", "html", "dom"]
+  skills:
+    - name: strix/web-app-penetration-testing
+      note: "reflected, stored and DOM XSS, with the client-side surfaces"
+    - name: web-app
+      note: "XSS playbook (skills/web-app/playbooks/xss.md)"
+
+broken-access-control:
+  classes:
+    - idor
+    - broken-access-control
+    - broken-object-level-authorization
+    - mass-assignment
+    - workflow-state-abuse
+  surfaces: ["/api/", "users", "orders", "basket", "address", "creditcard", "reviews"]
+  skills:
+    - name: strix/api-security-testing
+      note: "IDOR, horizontal and vertical privilege escalation, mass assignment"
+    - name: identity-auth
+      note: "access-control playbook (skills/identity-auth/playbooks/idor.md)"
+
+authentication:
+  classes:
+    - missing-authentication
+    - auth-bypass
+    - jwt
+    - broken-authentication
+    - default-credentials
+    - credential-stuffing
+    - cryptographic-issues
+  surfaces: [login", "signin", "token", "jwt", "auth", "password", "reset", "session"]
+  skills:
+    - name: identity-auth
+      note: "authentication, session and JWT playbook"
+    - name: strix/api-security-testing
+      note: "login bypass, token handling and credential weaknesses"
+
+file-and-path:
+  classes: [path-traversal, file-upload, unrestricted-file-upload, lfi]
+  surfaces: ["/ftp", "download", "file", "image", "upload", "media", "assets"]
+  skills:
+    - name: strix/web-app-penetration-testing
+      note: "path traversal, file exposure and upload handling"
+    - name: web-app
+      note: "path traversal playbook (skills/web-app/playbooks/path-traversal.md)"
+
+business-logic:
+  classes: [workflow-state-abuse, business-logic, race-condition, coupon-abuse]
+  surfaces: [basket", "checkout", "payment", "coupon", "order", "wishlist"]
+  skills:
+    - name: business-logic
+      note: "workflow, pricing and concurrency playbook"
+    - name: strix/api-security-testing
+      note: "state transitions and abuse cases across the order flow"
+
+ssrf-and-xxe:
+  classes: [ssrf, server-side-request-forgery, xxe]
+  surfaces: [url", "callback", "webhook", "xml", "upload", "pdf", "image"]
+  skills:
+    - name: strix/web-app-penetration-testing
+      note: "SSRF chains and XXE"
+    - name: api-testing
+      note: "SSRF and XXE playbook (skills/api-testing/playbooks/ssrf.md)"
+
+misconfiguration:
+  classes: [security-misconfiguration, missing-security-headers, info-disclosure]
+  surfaces: ["/metrics", "/robots", "/admin", "/support", "/encryptionkeys", "/config"]
+  skills:
+    - name: misconfig
+      note: "deployment and configuration exposure playbook"
+    - name: strix/web-app-penetration-testing
+      note: "exposed endpoints, headers and debug surfaces"
+
+supply-chain:
+  classes: [vulnerable-components, supply-chain, outdated-component]
+  surfaces: [package.json", "version", "banner", "x-powered-by"]
+  skills:
+    - name: strix/api-security-testing
+      note: "component fingerprinting and advisory matching"
+    - name: security/web-pentest-workflow
+      note: "the CVE research stage of the workflow"
+
+surface-enumeration:
+  # The recon stage: what to enumerate before testing anything.
+  classes: [recon, surface-enumeration]
+  surfaces: ["/api", "/rest", "routes", "endpoints", "bundle", "js", "swagger"]
+  skills:
+    - name: strix/api-security-testing
+      note: "how to enumerate and enumerate-first a REST/GraphQL API"
+    - name: security/recon-pipeline-tooling
+      note: "passive and active enumeration pipeline"
+    - name: strix/web-app-penetration-testing
+      note: "full web application attack surface map"
