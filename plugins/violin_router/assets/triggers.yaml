@@ -1,0 +1,145 @@
+sqli:
+  kind: vuln
+  patterns:
+    - 'SQLSTATE\[[0-9A-Z]{5}'
+    - 'mysql_fetch_(array|row|assoc)'
+    - 'ORA-\d{5}'
+    - 'You have an error in your SQL syntax'
+    - 'sqlite3?\.OperationalError'
+    - 'JDBCException'
+    - 'com\.mysql\.jdbc\.exceptions'
+    - 'UNION ALL SELECT'
+    - 'information_schema\.tables'
+  skills: [web-app, security/web-pentest-workflow]
+  labels: [SQL error, database error]
+ssrf:
+  kind: vuln
+  patterns:
+    - '169\.254\.169\.254'
+    - 'metadata\.google\.internal'
+    - 'interact\.sh'
+    - 'oastify\.com'
+    - 'requestbin\.(com|net)'
+    - 'canarytokens\.com'
+  skills: [api-testing, web-app]
+  labels: [cloud metadata, OOB callback]
+xss:
+  kind: vuln
+  patterns:
+    - 'Content-Security-Policy'
+    - 'alert\(document\.cookie\)'
+    - 'onerror\s*='
+    - '<script>alert\('
+    - 'innerHTML'
+    - 'dangerouslySetInnerHTML'
+  skills: [web-app]
+  labels: [script injection, DOM sink]
+ssti:
+  kind: vuln
+  patterns:
+    - 'TemplateSyntaxError'
+    - 'jinja2\.exceptions'
+    - 'FreeMarker.*Error'
+    - 'VelocityException'
+    - 'Could not parse.*expression'
+    - 'Unexpected token.*JSON at position'
+  skills: [web-app, security/web-pentest-workflow]
+  labels: [template engine error]
+idor:
+  kind: vuln
+  patterns:
+    - 'user_not_found'
+    - 'not authorized to access'
+    - 'resource does not exist or you do not have access'
+    - 'permission denied for (table|sequence|schema)'
+  skills: [identity-auth, api-testing]
+  labels: [access control response]
+auth-bypass:
+  kind: vuln
+  patterns:
+    - 'jwt\.MalformedError'
+    - 'JWT signature verification failed'
+    - 'InvalidAlgorithm'
+    - 'alg":\s*"none"'
+    - 'kid":\s*"'
+  skills: [identity-auth]
+  labels: [token verification]
+path-traversal:
+  kind: vuln
+  patterns:
+    - '\.\./\.\./etc/passwd'
+    - 'Directory traversal'
+    - 'Path Traversal'
+  skills: [web-app]
+  labels: [file path escape]
+deserialization:
+  kind: vuln
+  patterns:
+    - 'java\.io\.ObjectInputStream'
+    - 'ObjectInputStream'
+    - 'yaml\.constructor'
+    - 'pickle\.loads'
+  skills: [web-app]
+  labels: [unsafe deserialization]
+command-injection:
+  kind: vuln
+  patterns:
+    - 'uid=\d+\(.*\) gid=\d+'
+    - '/bin/sh: .*command not found'
+    - 'bash: .*: command not found'
+  skills: [web-app]
+  labels: [shell output]
+aws:
+  kind: tech
+  patterns:
+    - '\.amazonaws\.com'
+    - 'AKIA[0-9A-Z]{16}'
+    - 'ASIA[0-9A-Z]{16}'
+    - 'AmazonS3'
+    - 'AccessDenied'
+    - 'aws4_request'
+    - 'SignatureDoesNotMatch'
+  skills: [security/ai-pentest-tooling]
+  labels: [AWS]
+gcp:
+  kind: tech
+  patterns:
+    - 'storage\.googleapis\.com'
+    - '\.iam\.gserviceaccount\.com'
+  skills: [security/ai-pentest-tooling]
+  labels: [GCP]
+azure:
+  kind: tech
+  patterns:
+    - '\.blob\.core\.windows\.net'
+    - '\.azurewebsites\.net'
+    - 'AccountKey'
+    - 'SharedAccessSignature'
+  skills: [security/ai-pentest-tooling]
+  labels: [Azure]
+graphql:
+  kind: tech
+  patterns:
+    - 'GraphQL request error'
+    - 'GRAPHQL_VALIDATION_FAILED'
+    - 'Cannot query field'
+    - '__schema'
+    - 'introspection'
+  skills: [api-testing, web-app]
+  labels: [GraphQL]
+kubernetes:
+  kind: tech
+  patterns:
+    - 'k8s\.io/'
+    - 'kube-system'
+    - 'kubectl'
+  skills: [security/ai-pentest-tooling]
+  labels: [Kubernetes]
+jwt:
+  kind: tech
+  patterns:
+    - 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.'
+    - '"alg"\s*:\s*"(HS256|RS256|none)"'
+    - '"typ"\s*:\s*"JWT"'
+  skills: [identity-auth]
+  labels: [JWT]

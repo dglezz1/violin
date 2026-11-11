@@ -1,0 +1,21 @@
+name: violin_router
+version: 0.1.0
+description: Semantic skill router and CVE lookup for Violin. Detects
+  vulnerability classes and technology signals in target output, dispatches the
+  matching playbooks mechanically, and enriches findings with recent CVEs.
+kind: standalone
+pip_dependencies:
+  - pyyaml>=6.0,<7
+provides_tools:
+- violin_skill_search
+- violin_skill_view
+- violin_cve_lookup
+- violin_router_status
+- violin_router_reindex
+hooks:
+- post_tool_call
+- pre_llm_call
+toolsets:
+  violin_router:
+    description: Violin semantic skill routing and CVE lookup
+app_style: sh

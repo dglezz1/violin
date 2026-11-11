@@ -185,11 +185,14 @@ platform_toolsets:
     - delegation
     - vision
     - violin_guard
+    - violin_router
 
 plugins:
   enabled:
     - violin_guard
+    - violin_router
 
 known_plugin_toolsets:
   cli:
     - violin_guard
+    - violin_router

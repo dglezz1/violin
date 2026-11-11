@@ -138,6 +138,21 @@ _NON_TARGET_DOTTED_TOKENS = frozenset(
 _LOCAL_HOSTS = {"127.0.0.1", "0.0.0.0", "localhost", "::1"}
 
 
+def _allow_loopback_primary(scope: dict) -> bool:
+    """Whether the scope authorises a loopback address as the primary target.
+
+    A loopback target is normally refused: it is the shape an SSRF or a
+    mis-pointed scope takes. A deliberately local lab (an OWASP Juice Shop
+    instance on the operator's own machine) is the legitimate exception, and it
+    is granted by the scope that names it — an explicit, auditable opt-in
+    rather than a hole in the rule.
+    """
+    roe = scope.get("rules_of_engagement") or {}
+    if not isinstance(roe, dict):
+        return False
+    return roe.get("allow_loopback_primary_target") is True
+
+
 @dataclass
 class TargetCheckResult:
     errors: list[str] = field(default_factory=list)
@@ -229,10 +244,15 @@ class _TargetPolicy:
         result: TargetCheckResult,
         *,
         allow_research: bool = False,
+        allow_loopback: bool = False,
     ) -> None:
         if self.is_excluded(candidate):
             result.errors.append(f"excluded target {candidate} must not be touched")
         elif allow_research and _matches_host(candidate, self.research_hosts):
+            return
+        elif allow_loopback and _matches_host(candidate, _LOCAL_HOSTS):
+            # The scope named this loopback lab as an assessment target; it is
+            # still checked against the exclusions above.
             return
         elif self.is_secondary_only(candidate):
             result.errors.append(
@@ -530,10 +550,13 @@ def check_scope_targets(
 
     explicit = normalize_target(primary_target) if primary_target else ""
     candidates = extract_target_candidates(command)
+    allow_loopback = _allow_loopback_primary(scope)
     seen: set[str] = set()
     if explicit:
         seen.add(explicit)
-        policy.check_primary(explicit, result, allow_research=allow_research_primary)
+        policy.check_primary(
+            explicit, result, allow_research=allow_research_primary, allow_loopback=allow_loopback
+        )
     for candidate in candidates:
         if candidate not in seen:
             seen.add(candidate)
