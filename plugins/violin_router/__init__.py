@@ -319,7 +319,7 @@ def _vocabulary_note(phase: str) -> str:
         return ""
     if key in _VOCABULARY_DISPATCHED:
         return ""
-    from .core.surface import guard_vocabulary
+    from .core.surface import guard_vocabulary, parallel_hint
 
     classes = guard_vocabulary()
     if not classes:
@@ -331,12 +331,16 @@ def _vocabulary_note(phase: str) -> str:
     summary = "; ".join(
         f"{group}: {', '.join(sorted(names))}" for group, names in sorted(groups.items())
     )
-    return (
+    hint = parallel_hint(list(classes))
+    note = (
         "\n[SKILL DISPATCH] vocabulary de clases — clases que el gate puede enrutar "
         f"({len(classes)}):\n{summary}\n"
         "Cobertura exhaustiva = cada clase contra cada ruta. Registra cada clase no "
         "probada como hipótesis con vuln_class, o ciérrala con evidencia."
     )
+    if hint:
+        note += f"\n[PARALELISMO] {hint}"
+    return note
 
 
 def _pre_llm_call_hook(session_id: Any = None, eng_dir: Any = None, **kwargs: Any) -> str:

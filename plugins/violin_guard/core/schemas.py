@@ -35,9 +35,41 @@ from .schema_tasks import (
 T = TypeVar("T", bound=BaseModel)
 
 
+def _normalize_evidence_outputs(raw: Any) -> Any:
+    """Accept the list-of-strings shape, and the nested one a model sometimes sends.
+
+    A model that renders ``evidence_outputs`` as ``[{"item": "evidence/x"}]``
+    means the same thing as ``["evidence/x"]``. Normalising it here keeps a
+    cosmetic mistake from costing a turn, and keeps the paths themselves
+    validated by the field type afterwards.
+    """
+    if not isinstance(raw, list):
+        return raw
+    normalized: list[str] = []
+    for entry in raw:
+        if isinstance(entry, str):
+            normalized.append(entry)
+        elif isinstance(entry, dict):
+            for key in ("item", "path", "file", "name"):
+                value = entry.get(key)
+                if isinstance(value, str) and value:
+                    normalized.append(value)
+                    break
+            else:
+                # An entry with no recognisable path is a real mistake; leave it
+                # to the field validation to reject.
+                normalized.append(entry)
+        else:
+            normalized.append(entry)
+    return normalized
+
+
 def validate_args(model_cls: type[T], raw_args: dict[str, Any] | None, *, strict: bool = True) -> T:
     """Validate raw payload dictionary using Pydantic model."""
-    return model_cls.model_validate(raw_args or {}, strict=strict)
+    payload = dict(raw_args or {})
+    if "evidence_outputs" in payload:
+        payload["evidence_outputs"] = _normalize_evidence_outputs(payload["evidence_outputs"])
+    return model_cls.model_validate(payload, strict=strict)
 
 
 def to_tool_schema(

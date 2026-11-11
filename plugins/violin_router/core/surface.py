@@ -153,5 +153,32 @@ def guard_vocabulary() -> tuple[str, ...]:
     return tuple(sorted(str(key) for key in routes))
 
 
+def independent_classes(classes: list[str], minimum: int = 2) -> list[str]:
+    """Classes that do not overlap, and can therefore be tested in parallel.
+
+    Two classes overlap when one implies the other (``sqli`` and
+    ``sql-injection`` are one class), so the list is collapsed to one
+    representative per family before it is used.
+    """
+    families: dict[str, str] = {}
+    for name in classes:
+        family = name.split("-")[0]
+        families.setdefault(family, name)
+    return list(families.values())
+
+
+def parallel_hint(classes: list[str]) -> str:
+    """A note telling the agent it can test independent classes at once."""
+    families = independent_classes(classes)
+    if len(families) < 2:
+        return ""
+    return (
+        f"clases independientes para probar en paralelo ({len(families)}): "
+        + ", ".join(sorted(families))
+        + " — delega con delegate_task por familia y mergea los resultados; "
+        "cada hijo hereda el guard y el router"
+    )
+
+
 def as_dicts(refs: list[PlaybookRef]) -> list[dict[str, Any]]:
     return [{"name": ref.name, "note": ref.note} for ref in refs]
