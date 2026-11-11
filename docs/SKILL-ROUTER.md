@@ -78,6 +78,27 @@ guard's own routing module which skill a vulnerability class maps to, and it
 checks the engagement's binding before releasing a playbook for that class.
 The guard remains the component that refuses.
 
+## What the dispatch carries
+
+The note injected into the agent's turn is what makes the router effective. It
+carries:
+
+- **the class that was detected**, with the playbooks that cover it, resolved
+  from the class and from the surface the command touched;
+- **the routable class vocabulary**, read from the guard's own routing table,
+  so the coverage standard ("every class, against every route") is reachable
+  without the agent having to guess which classes exist;
+- **where the engagement's state is**, so a resumed session continues from the
+  coverage matrix and the hypothesis board instead of re-enumerating what a
+  previous turn already covered;
+- **the batch command** (`violin_exec_burst` takes up to 20 commands in one
+  turn), which is how a class gets tested in a turn rather than twenty;
+- **the independent class families**, which can be tested in parallel.
+
+None of it names a vulnerability in the target. It tells the agent what the
+method is and where the state is; what is actually exploitable is what the
+agent has to find.
+
 ## Loopback labs
 
 A loopback address is refused as a primary target by default — that is the
