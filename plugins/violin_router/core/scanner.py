@@ -20,8 +20,9 @@ from .embedding import EmbeddingError, build_embedder
 from .index import SkillIndex
 from .triggers import Trigger, load_triggers, scan_text
 
-# Outputs that are worth scanning: the target-facing execution tools.
-TARGET_TOOLS = {"violin_exec", "violin_exec_burst"}
+# Outputs that are worth scanning: the target-facing execution tools, plus the
+# built-in terminal, which the guard also polices for target-facing commands.
+TARGET_TOOLS = {"violin_exec", "violin_exec_burst", "terminal"}
 SNIPPET_WINDOW = 512
 MAX_TEXT = 20000
 

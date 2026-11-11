@@ -139,7 +139,19 @@ def guard_vocabulary() -> tuple[str, ...]:
     exhaustive standard ("every class, against every route") is only
     reachable if the agent knows the full list. The guard's routing table is
     the authority; the router surfaces it.
+
+    The table is read from the guard's source rather than imported: the
+    plugin's module namespace is not the guard's, so an import would depend
+    on the load order. Reading the file keeps this working whatever the
+    loader does.
     """
+    classes = _classes_from_guard_module()
+    if classes:
+        return classes
+    return _classes_from_guard_source()
+
+
+def _classes_from_guard_module() -> tuple[str, ...]:
     try:
         from .binding import _load_guard_policy
     except Exception:
@@ -151,6 +163,43 @@ def guard_vocabulary() -> tuple[str, ...]:
     if not isinstance(routes, dict):
         return ()
     return tuple(sorted(str(key) for key in routes))
+
+
+def _classes_from_guard_source() -> tuple[str, ...]:
+    """Read the routing table out of the guard's policy source."""
+    import re
+
+    for candidate in _guard_policy_paths():
+        try:
+            text = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        match = re.search(r"_VULNERABILITY_ROUTES\s*(?::[^=]*)?=\s*\{(.*?)\n\}", text, re.DOTALL)
+        if not match:
+            continue
+        classes = re.findall(r"^\s*\"([a-z0-9][a-z0-9_-]*)\":", match.group(1), re.MULTILINE)
+        if classes:
+            return tuple(sorted(set(classes)))
+    return ()
+
+
+def _guard_policy_paths() -> list[Path]:
+    """Where the guard's policy module may live on this host."""
+    paths: list[Path] = []
+    override = os.environ.get("VIOLIN_GUARD_POLICY_PATH", "").strip()
+    if override:
+        paths.append(Path(override).expanduser())
+    here = Path(__file__).resolve()
+    # .../plugins/violin_router/core/surface.py -> .../plugins/violin_guard/...
+    plugins_root = here.parent.parent.parent
+    paths.append(
+        plugins_root
+        / "violin_guard"
+        / "core"
+        / "skills"
+        / "skill_policy.py"
+    )
+    return paths
 
 
 def independent_classes(classes: list[str], minimum: int = 2) -> list[str]:

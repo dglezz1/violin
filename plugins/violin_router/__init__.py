@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from .core import (
@@ -275,6 +276,9 @@ def _post_tool_call_hook(
     if isinstance(args, dict):
         command = str(args.get("command") or args.get("cmd") or "")
         phase = str(args.get("phase") or "")
+        eng_dir = str(args.get("eng_dir") or "")
+        if eng_dir and eng_dir not in _engagement_dirs():
+            _engagement_dirs().insert(0, Path(eng_dir).expanduser())
     try:
         scan_tool_result(
             str(tool_name),
@@ -288,22 +292,80 @@ def _post_tool_call_hook(
         return
     if phase:
         _remember_phase(phase)
-    _maybe_dispatch_vocabulary(phase)
 
 
-_VOCABULARY_DISPATCHED: set[str] = set()
 _LAST_PHASE: list[str] = []
 
 
 def _remember_phase(phase: str) -> None:
     """Remember the phase the agent is working in.
 
-    The ``pre_llm_call`` hook does not carry the phase, but the command that
-    ran does, so the last observed phase is what the next turn needs.
+    The ``pre_llm_call`` hook does not carry the phase and a terminal call
+    does not either, so the phase is read from the engagement's own PTT: the
+    active task is the guard's record of what the agent is doing.
     """
     value = phase.strip().upper()
     if value:
         _LAST_PHASE[:] = [value]
+        return
+    _LAST_PHASE[:] = [_active_task_phase()]
+
+
+def _active_task_phase() -> str:
+    """The phase of the engagement's active PTT task, if it can be read."""
+    for candidate in _engagement_dirs():
+        ptt_path = candidate / "state" / "ptt.md"
+        if not ptt_path.is_file():
+            continue
+        try:
+            text = ptt_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        phase = ""
+        for line in text.splitlines():
+            heading = line.strip()
+            if heading.startswith("## Phase:"):
+                phase = heading.split("## Phase:", 1)[1].strip().upper()
+            elif heading.startswith("## ") and phase:
+                phase = ""
+            if line.startswith("|") and "[~]" in line and phase:
+                return phase
+        if phase:
+            return phase
+    return ""
+
+
+_ENGAGEMENT_DIRS: list[Path] = []
+
+
+def _engagement_dirs() -> list[Path]:
+    """The engagement directories this session may be working in.
+
+    A directory qualifies as an engagement when it holds a scope and a PTT;
+    the search starts at the environment override, then the process working
+    directory and its parents, so a session that starts inside an engagement
+    finds it without being told where it is.
+    """
+    if _ENGAGEMENT_DIRS:
+        return _ENGAGEMENT_DIRS
+    candidates: list[Path] = []
+    override = os.environ.get("VIOLIN_ENG_DIR", "").strip()
+    if override:
+        candidates.append(Path(override).expanduser())
+    try:
+        cwd = Path.cwd().resolve()
+        candidates.append(cwd)
+        candidates.extend(cwd.parents)
+    except OSError:
+        pass
+    for candidate in candidates:
+        if (candidate / "scope" / "scope.yaml").is_file() and (
+            candidate / "state" / "ptt.md"
+        ).is_file():
+            if candidate not in _ENGAGEMENT_DIRS:
+                _ENGAGEMENT_DIRS.append(candidate)
+            break
+    return _ENGAGEMENT_DIRS
 
 
 def _vocabulary_note(phase: str) -> str:
@@ -313,18 +375,23 @@ def _vocabulary_note(phase: str) -> str:
     cannot cover a class it does not know exists, and the guard's routing
     table is what decides. Surfacing it removes the guess without telling the
     agent what is vulnerable.
+
+    It is repeated rather than sent once: a long engagement compacts its
+    context, and a note that was compacted away would leave the later part of
+    the engagement working from a shorter list than the earlier part.
     """
     key = phase.strip().upper()
+    if not key:
+        # No phase was observed yet in this session: read it from the
+        # engagement's own PTT, which is the guard's record of the active task.
+        key = _active_task_phase()
     if not key or key in {"SCOPING", "RECON"}:
-        return ""
-    if key in _VOCABULARY_DISPATCHED:
         return ""
     from .core.surface import guard_vocabulary, parallel_hint
 
     classes = guard_vocabulary()
     if not classes:
         return ""
-    _VOCABULARY_DISPATCHED.add(key)
     groups: dict[str, list[str]] = {}
     for name in classes:
         groups.setdefault(name.split("-")[0], []).append(name)
@@ -340,6 +407,20 @@ def _vocabulary_note(phase: str) -> str:
     )
     if hint:
         note += f"\n[PARALELISMO] {hint}"
+    note += (
+        "\n[ESTADO] El engagement ya tiene estado: lee state/coverage-matrix.yaml "
+        "(rutas ya probadas), hypotheses.md (hipótesis abiertas y clases ya "
+        "descartadas) y state/history.md (comandos ya ejecutados) ANTES de "
+        "reconocer o re-probar. Reexplorar lo ya cubierto no aporta cobertura; "
+        "las rutas no cubiertas y las clases sin hipótesis son el trabajo "
+        "pendiente."
+    )
+    note += (
+        "\n[LOTE] Empaqueta las sondas de una misma clase en una sola llamada: "
+        "violin_exec_burst con commands=[...] (hasta 20 comandos por lote, un mismo "
+        "target y fase). Un lote = un turno. Cada comando del lote deja su propio "
+        "receipt, así que la evidencia sigue siendo atribuible."
+    )
     return note
 
 
