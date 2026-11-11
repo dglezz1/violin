@@ -120,6 +120,25 @@ def _create_artifact(
         atomic_text(target, content)
 
 
+def _objective_mode_note() -> str:
+    """The objective-mode dispatch note, shared with the router when present."""
+    try:
+        from plugins.violin_router.core.objectives import dispatch_note
+    except Exception:
+        try:
+            from ...violin_router.core.objectives import dispatch_note  # type: ignore
+        except Exception:
+            return (
+                "[OBJECTIVE MODE] Challenge-style engagement: if the target exposes a "
+                "record of its own objectives, that record is the work queue and the "
+                "target's state is the only verdict. Snapshot it, work the open entries "
+                "one at a time (each description is the specification of its trigger), "
+                "and re-snapshot after every batch. See "
+                "skills/pentest/references/objective-catalogue.md."
+            )
+    return dispatch_note()
+
+
 def _ctf_ptt(host: str) -> str:
     today = date.today().isoformat()
     return f"""# CTF Task Tree — {host} {today}
@@ -232,6 +251,20 @@ def init_engagement(
             with lock_file(scope_path):
                 atomic_text(scope_path, yaml.safe_dump(_ctf_scope(host), sort_keys=False))
             result.add_info("wrote CTF scope")
+
+        # A challenge-style engagement is, by definition, an objectives
+        # engagement: arm the objective-catalogue mode so the first turn
+        # receives the method without any operator prompt. The router's
+        # output-shape detection still arms it for any other target that
+        # publishes an objective record.
+        note_path = eng_dir / "state" / "objective-mode.note"
+        if not note_path.is_file():
+            try:
+                note_path.parent.mkdir(parents=True, exist_ok=True)
+                note_path.write_text(_objective_mode_note(), encoding="utf-8")
+                result.add_info("armed objective-catalogue mode")
+            except OSError:
+                pass
 
         if matrix_created_here:
             scope_path = eng_dir / "scope" / "scope.yaml"
