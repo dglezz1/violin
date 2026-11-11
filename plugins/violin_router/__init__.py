@@ -329,7 +329,11 @@ def _active_task_phase() -> str:
             elif heading.startswith("## ") and phase:
                 phase = ""
             if line.startswith("|") and "[~]" in line and phase:
-                return phase
+                # The legend at the top of the file also carries a "[~]" cell;
+                # a task row is one that starts with a task id.
+                cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                if cells and cells[0].startswith("PT-"):
+                    return phase
         if phase:
             return phase
     return ""
@@ -416,10 +420,12 @@ def _vocabulary_note(phase: str) -> str:
         "pendiente."
     )
     note += (
-        "\n[LOTE] Empaqueta las sondas de una misma clase en una sola llamada: "
-        "violin_exec_burst con commands=[...] (hasta 20 comandos por lote, un mismo "
-        "target y fase). Un lote = un turno. Cada comando del lote deja su propio "
-        "receipt, así que la evidencia sigue siendo atribuible."
+        "\n[LOTE] Sondea por lotes, no de una en una. Una llamada con "
+        "tool_call(tool_name=\"violin_exec_burst\", arguments={...\"commands\":[...], "
+        "\"target\":..., \"phase\":...}) ejecuta hasta 20 comandos en UN turno y deja "
+        "un receipt firmado por comando. Veinte sondas cuestan un turno; una por "
+        "turno cuesta veinte. Agrupa por clase: todas las sondas de una clase en "
+        "un lote, luego el siguiente lote."
     )
     return note
 
