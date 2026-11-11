@@ -650,6 +650,28 @@ def _session_handoff(eng_dir: Path) -> str:
         except OSError:
             pass
 
+    # Mechanical resources the session can spend its budget on, named only
+    # when they exist: ZAP leads already mapped to classes, and the headless
+    # renderer for objectives whose trigger lives in the rendered app.
+    zap = eng_dir / "evidence" / "zap" / "alerts.jsonl"
+    if zap.is_file():
+        try:
+            leads = sum(1 for line in zap.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+            if leads:
+                parts.append(
+                    f"[HANDOFF] {leads} leads mecánicos de ZAP en evidence/zap/alerts.jsonl "
+                    "(cada uno con su clase ya mapeada): verifícalos por el guard antes de "
+                    "enviarlos — un lead no es un finding."
+                )
+        except OSError:
+            pass
+    parts.append(
+        "[HANDOFF] objetivos que nombren páginas/UI/sinks de DOM: rendirlos con "
+        "Chromium headless del perfil (sh ops/headless-dom.sh <url> <name> — DOM, "
+        "screenshot y texto a evidence/client/); el API no muestra lo que el "
+        "render monta. Skill: client-side-render."
+    )
+
     return "\n\n".join(parts)
 
 
