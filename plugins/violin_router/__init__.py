@@ -22,6 +22,7 @@ from .core import (
     scan_tool_result,
 )
 from .core.binding import bound_classes, check_binding
+from .core.objectives import detect_catalogue, dispatch_note as objective_dispatch_note
 
 _TOOLSET = "violin_router"
 
@@ -292,9 +293,45 @@ def _post_tool_call_hook(
         return
     if phase:
         _remember_phase(phase)
+    _maybe_queue_objective_mode(tool_name, result, args)
 
 
 _LAST_PHASE: list[str] = []
+
+
+_OBJECTIVE_NOTE_INTERVAL = 45 * 60  # re-dispatch after long sessions / compaction
+
+
+def _maybe_queue_objective_mode(tool_name: Any, result: Any, args: Any) -> None:
+    """Queue the objective-mode note when a target response looks like a catalogue.
+
+    The detection is on the response shape, not on a route name, so any target
+    that publishes its own objective record arms the mode without the operator
+    asking for it. The note lives in the engagement, so it survives gateway
+    restarts, and re-arms after an interval so a long session re-receives it
+    after its context was compacted.
+    """
+    if str(tool_name or "") not in {"violin_exec", "violin_exec_burst"}:
+        return
+    text = result if isinstance(result, str) else str(result or "")
+    if not text:
+        return
+    try:
+        if detect_catalogue(text) is None:
+            return
+        dirs = _engagement_dirs()
+        if not dirs:
+            return
+        import time as _time
+
+        note_path = dirs[0] / "state" / "objective-mode.note"
+        if note_path.is_file() and (_time.time() - note_path.stat().st_mtime) < _OBJECTIVE_NOTE_INTERVAL:
+            return
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note_path.write_text(objective_dispatch_note(), encoding="utf-8")
+    except Exception:
+        # Advisory layer: never break the agent's turn over a detection.
+        return
 
 
 def _remember_phase(phase: str) -> None:
@@ -372,6 +409,23 @@ def _engagement_dirs() -> list[Path]:
     return _ENGAGEMENT_DIRS
 
 
+def _drain_objective_note() -> list[str]:
+    """Deliver a queued objective-mode note once, then remove it."""
+    out: list[str] = []
+    for candidate in _engagement_dirs():
+        note_path = candidate / "state" / "objective-mode.note"
+        try:
+            if not note_path.is_file():
+                continue
+            text = note_path.read_text(encoding="utf-8", errors="replace").strip()
+            if text:
+                out.append(text)
+            note_path.unlink()
+        except OSError:
+            continue
+    return out
+
+
 def _vocabulary_note(phase: str) -> str:
     """The routable class vocabulary, surfaced once per phase.
 
@@ -438,6 +492,7 @@ def _pre_llm_call_hook(session_id: Any = None, eng_dir: Any = None, **kwargs: An
         for item in pending[:4]:
             parts.append(item.note())
             DispatchQueue().mark_delivered(item)
+        parts.extend(_drain_objective_note())
         note = _vocabulary_note(str(kwargs.get("phase") or (_LAST_PHASE[0] if _LAST_PHASE else "")))
         if note:
             parts.append(note)
