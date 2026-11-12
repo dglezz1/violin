@@ -201,6 +201,42 @@ TRIGGERS: dict[str, dict[str, Any]] = {
         "skills": ["security/k8s-misconfiguration"],
         "labels": ["Kubernetes"],
     },
+    "http-401": {
+        "kind": "vuln",
+        "patterns": [r"HTTP/1\.[01] 401 Unauthorized", r'"status":401\b'],
+        "skills": ["identity-auth", "missing-authentication"],
+        "labels": ["401 bypass", "http-401-403-authorization-bypasses"],
+    },
+    "http-403": {
+        "kind": "vuln",
+        "patterns": [r"HTTP/1\.[01] 403 Forbidden", r'"status":403\b', r"\b403 Forbidden\b"],
+        "skills": ["broken-access-control", "identity-auth"],
+        "labels": ["403 bypass", "http-401-403-authorization-bypasses"],
+    },
+    "http-429": {
+        "kind": "vuln",
+        "patterns": [r"HTTP/1\.[01] 429 Too Many Requests", r'"status":429\b'],
+        "skills": ["rate-limit"],
+        "labels": ["rate limit bypass", "anti-automation"],
+    },
+    "http-5xx": {
+        "kind": "vuln",
+        "patterns": [r"HTTP/1\.[01] 5[0-9][0-9] (Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-out)"],
+        "skills": ["misconfiguration", "security-misconfiguration"],
+        "labels": ["verbose errors", "error handling information disclosure"],
+    },
+    "http-redirect": {
+        "kind": "vuln",
+        "patterns": [r"HTTP/1\.[01] 30[12] Found", r"Location: https?://"],
+        "skills": ["open-redirect", "redirects-unvalidated"],
+        "labels": ["open redirect"],
+    },
+    "http-authbypass-200": {
+        "kind": "vuln",
+        "patterns": [r'"role":"admin"', r'"isAdmin":true', r'"is_admin":\s*true'],
+        "skills": ["broken-access-control", "mass-assignment"],
+        "labels": ["auth bypass"],
+    },
     "jwt": {
         "kind": "tech",
         "patterns": [

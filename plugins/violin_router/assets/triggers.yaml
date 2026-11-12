@@ -143,3 +143,50 @@ jwt:
     - '"typ"\s*:\s*"JWT"'
   skills: [identity-auth]
   labels: [JWT]
+# HTTP status classes: every target response status is a mechanical lead
+# with its methodology (HackTricks via the hacktricks MCP — hacktricks_search
+# with the query in the labels). The outputs reach the scanner because the
+# guard injects `curl -i` for proof capture.
+http-401:
+  kind: vuln
+  patterns:
+    - 'HTTP/1\.[01] 401 Unauthorized'
+    - '"status":401\b'
+  skills: [identity-auth, missing-authentication]
+  labels: [401 bypass, hacktricks_search: 'login bypass 401', http-401-403-authorization-bypasses]
+http-403:
+  kind: vuln
+  patterns:
+    - 'HTTP/1\.[01] 403 Forbidden'
+    - '"status":403\b'
+    - '\b403 Forbidden\b'
+  skills: [broken-access-control, identity-auth]
+  labels: [403 bypass, hacktricks_search: '403 authorization bypass', http-401-403-authorization-bypasses]
+http-429:
+  kind: vuln
+  patterns:
+    - 'HTTP/1\.[01] 429 Too Many Requests'
+    - '"status":429\b'
+  skills: [rate-limit]
+  labels: [rate limit bypass, hacktricks_search: 'rate limit bypass', anti-automation]
+http-5xx:
+  kind: vuln
+  patterns:
+    - 'HTTP/1\.[01] 5[0-9][0-9] (Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-out)'
+  skills: [misconfiguration, security-misconfiguration]
+  labels: [verbose errors, hacktricks_search: 'error handling information disclosure']
+http-redirect:
+  kind: vuln
+  patterns:
+    - 'HTTP/1\.[01] 30[12] Found'
+    - 'Location: https?://'
+  skills: [open-redirect, redirects-unvalidated]
+  labels: [open redirect, hacktricks_search: 'open redirect']
+http-authbypass-200:
+  kind: vuln
+  patterns:
+    - '"role":"admin"'
+    - '"isAdmin":true'
+    - '"is_admin":\s*true'
+  skills: [broken-access-control, mass-assignment]
+  labels: [auth bypass, hacktricks_search: 'idor mass assignment admin']
